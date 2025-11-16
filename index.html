@@ -10,9 +10,13 @@
 
   <!-- iOS PWA meta -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="BTC Alertas" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
+  <link rel="apple-touch-icon" sizes="512x512" href="icon-512.png" />
 
   <style>
     body {
@@ -150,10 +154,17 @@
     <button id="monitor" style="margin-top: 0.5rem; background: #f59e0b;">Só monitorar preço</button>
     <button id="test" style="margin-top: 0.5rem; background: #3b82f6;">Testar conexão</button>
     <div class="status" id="status"></div>
-    <small>
-      Este app consulta o preço do BTC/EUR a cada 10 segundos via CoinGecko.
-      Para maior confiabilidade em iPhone, deixe o PWA aberto em segundo plano.
+    <small id="usage-tip">
+      Este app consulta o preço do BTC/EUR a cada 60 segundos via CoinGecko.
     </small>
+    <div id="ios-tip" style="display: none; margin-top: 0.5rem; padding: 0.75rem; background: #1f2937; border-radius: 0.5rem; border-left: 3px solid #f59e0b;">
+      <small style="color: #fbbf24; font-weight: 600;">
+        📱 <strong>iPhone/iPad:</strong><br>
+        • Instale como PWA: Safari → Compartilhar → "Adicionar à Tela Inicial"<br>
+        • Mantenha o app aberto para alertas funcionarem<br>
+        • Evite fechar completamente o Safari
+      </small>
+    </div>
   </div>
 
   <script src="main.js"></script>
