@@ -9,10 +9,66 @@ const enableBtn = document.getElementById("enable");
 
 let currentPrice = null;
 let pollingIntervalId = null;
+let wakeLock = null;
+let isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+let isVisible = true;
+let lastPriceCheck = Date.now();
 
 function log(msg) {
   console.log("[BTC ALERT]", msg);
   statusEl.textContent = msg;
+}
+
+// Wake Lock para manter tela ativa (iOS)
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      log('Wake Lock ativado (mantém tela ativa)');
+      
+      wakeLock.addEventListener('release', () => {
+        log('Wake Lock liberado');
+      });
+    }
+  } catch (err) {
+    log('Wake Lock não suportado: ' + err.message);
+  }
+}
+
+// Detectar mudanças de visibilidade
+function setupVisibilityHandlers() {
+  document.addEventListener('visibilitychange', () => {
+    isVisible = !document.hidden;
+    
+    if (isVisible) {
+      log('App voltou para primeiro plano');
+      // Verificar se precisa atualizar preço
+      const timeSinceLastCheck = Date.now() - lastPriceCheck;
+      if (timeSinceLastCheck > 60000) { // Mais de 1 minuto
+        fetchPrice();
+      }
+    } else {
+      log('App foi para segundo plano');
+      if (isIOS) {
+        // No iOS, registrar background sync
+        if ('serviceWorker' in navigator && 'sync' in window.ServiceWorkerRegistration.prototype) {
+          navigator.serviceWorker.ready.then(reg => {
+            return reg.sync.register('price-check');
+          }).catch(err => console.log('Background sync não suportado'));
+        }
+      }
+    }
+  });
+  
+  // Eventos de foco da janela
+  window.addEventListener('focus', () => {
+    isVisible = true;
+    fetchPrice();
+  });
+  
+  window.addEventListener('blur', () => {
+    isVisible = false;
+  });
 }
 
 async function registerServiceWorker() {
@@ -58,6 +114,7 @@ async function requestNotificationPermission() {
 
 async function fetchPrice() {
   try {
+    lastPriceCheck = Date.now();
     log("Fazendo requisição para CoinGecko...");
     const res = await fetch(API_URL);
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -75,14 +132,24 @@ async function fetchPrice() {
       priceEl.classList.add("price-update");
       setTimeout(() => priceEl.classList.remove("price-update"), 600);
       
-      log(`Preço atualizado: € ${price.toLocaleString("de-DE")}`);
+      const timestamp = new Date().toLocaleTimeString();
+      log(`Preço atualizado: € ${price.toLocaleString("de-DE")} (${timestamp})`);
       await checkThresholds(price);
+      
+      // Salvar último preço para comparação
+      localStorage.setItem('lastPrice', price);
+      localStorage.setItem('lastUpdate', Date.now());
     } else {
       log("Resposta inesperada da API: " + JSON.stringify(json));
     }
   } catch (err) {
     console.error("Erro ao consultar preço:", err);
     log(`Erro ao consultar preço: ${err.message}`);
+    
+    // Em caso de erro, tentar novamente em 30s no iOS
+    if (isIOS && isVisible) {
+      setTimeout(fetchPrice, 30000);
+    }
   }
 }
 
@@ -117,12 +184,28 @@ async function startPolling() {
   if (pollingIntervalId) clearInterval(pollingIntervalId);
 
   await fetchPrice();
-  pollingIntervalId = setInterval(fetchPrice, 10_000); // 10 segundos
   
+  // Intervalos mais frequentes no iOS quando visível
+  const interval = isIOS ? (isVisible ? 30_000 : 60_000) : 60_000;
+  pollingIntervalId = setInterval(() => {
+    if (isVisible || !isIOS) {
+      fetchPrice();
+    }
+  }, interval);
+  
+  // Ativar Wake Lock se disponível
+  if (isIOS) {
+    await requestWakeLock();
+  }
+  
+  const intervalText = isIOS ? '30-60s' : '60s';
   if (Notification.permission === "granted") {
-    log("Monitorando preço a cada 10s com alertas ativos…");
+    log(`Monitorando preço a cada ${intervalText} com alertas ativos…`);
+    if (isIOS) {
+      log('💡 iOS: Mantenha o app aberto para melhor funcionamento');
+    }
   } else {
-    log("Monitorando preço a cada 10s (alertas desativados - clique em 'Ativar alertas')");
+    log(`Monitorando preço a cada ${intervalText} (alertas desativados)`);
   }
 }
 
@@ -183,12 +266,51 @@ document.getElementById("monitor").addEventListener("click", async () => {
   startPolling();
 });
 
+// Listener para mensagens do Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    const { type, price } = event.data;
+    
+    if (type === 'PRICE_UPDATE') {
+      currentPrice = price;
+      priceNumberEl.textContent = price.toLocaleString("de-DE", { 
+        minimumFractionDigits: 0, 
+        maximumFractionDigits: 0 
+      });
+      log(`Preço atualizado via SW: € ${price.toLocaleString("de-DE")}`);
+    } else if (type === 'CHECK_THRESHOLDS') {
+      checkThresholds(price);
+    }
+  });
+}
+
 // Restaura valores salvos
 window.addEventListener("load", () => {
   const below = localStorage.getItem("btc_below");
   const above = localStorage.getItem("btc_above");
   if (below) belowInput.value = below;
   if (above) aboveInput.value = above;
+  
+  // Setup handlers de visibilidade
+  setupVisibilityHandlers();
+  
+  // Detectar iOS e mostrar dicas
+  if (isIOS) {
+    log("📱 iOS detectado - otimizações ativadas");
+    const iosTip = document.getElementById("ios-tip");
+    if (iosTip) {
+      iosTip.style.display = "block";
+    }
+    
+    // Verificar se está rodando como PWA standalone
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                         window.navigator.standalone === true;
+    if (!isStandalone) {
+      log("💡 Para melhor funcionamento, instale como PWA");
+    } else {
+      log("✅ Rodando como PWA - modo otimizado");
+    }
+  }
   
   // Verifica o protocolo
   if (location.protocol === "file:") {
@@ -199,4 +321,11 @@ window.addEventListener("load", () => {
   }
   
   fetchPrice();
+});
+
+// Liberar Wake Lock ao sair
+window.addEventListener('beforeunload', () => {
+  if (wakeLock) {
+    wakeLock.release();
+  }
 });
